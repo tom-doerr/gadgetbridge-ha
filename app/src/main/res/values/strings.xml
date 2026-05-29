@@ -4825,7 +4825,7 @@
     <string name="prefs_ha_upload_title">Home Assistant upload</string>
     <string name="prefs_ha_upload_summary">Upload newly synced health samples directly to Home Assistant</string>
     <string name="prefs_ha_upload_enabled_title">Enable Home Assistant upload</string>
-    <string name="prefs_ha_upload_enabled_summary">Sends selected Huawei health samples to Home Assistant using its REST API</string>
+    <string name="prefs_ha_upload_enabled_summary">Sends selected Huawei health samples to the Gadgetbridge ingest endpoint in Home Assistant</string>
     <string name="prefs_ha_upload_url_title">Home Assistant URL</string>
     <string name="prefs_ha_upload_token_title">Long-lived access token</string>
     <string name="prefs_ha_upload_token_summary">Stored in Gadgetbridge app preferences; never hard-code this in the repository</string>

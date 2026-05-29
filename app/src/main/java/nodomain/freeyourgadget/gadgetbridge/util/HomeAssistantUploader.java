@@ -18,6 +18,7 @@ package nodomain.freeyourgadget.gadgetbridge.util;
 
 import android.content.SharedPreferences;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.slf4j.Logger;
@@ -30,8 +31,10 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -47,6 +50,8 @@ public final class HomeAssistantUploader {
 
     private static final String DEFAULT_HA_URL = "http://ha:8123";
     private static final String DEFAULT_ENTITY_PREFIX = "gadgetbridge_huawei";
+    private static final String INGEST_PATH = "/api/gadgetbridge_ingest/samples";
+    private static final int MAX_SAMPLES_PER_REQUEST = 500;
 
     private HomeAssistantUploader() {
     }
@@ -63,15 +68,17 @@ public final class HomeAssistantUploader {
                 return;
             }
 
+            final List<MetricSample> metricSamples = new ArrayList<>();
             for (final HuaweiActivitySample sample : copy) {
                 final long timestamp = sample.getTimestamp();
-                uploadIntMetric(config, device, "heart_rate", unsignedOrNotMeasured(sample.getHeartRate()), "bpm", timestamp);
-                uploadIntMetric(config, device, "resting_heart_rate", unsignedOrNotMeasured(sample.getRestingHeartRate()), "bpm", timestamp);
-                uploadIntMetric(config, device, "oxygen_saturation", unsignedOrNotMeasured(sample.getSpo()), "%", timestamp);
-                uploadIntMetric(config, device, "steps", sample.getSteps(), "steps", timestamp);
-                uploadIntMetric(config, device, "distance", sample.getDistance(), "m", timestamp);
-                uploadIntMetric(config, device, "calories", sample.getCalories(), "kcal", timestamp);
+                addIntMetric(metricSamples, config, device, "heart_rate", unsignedOrNotMeasured(sample.getHeartRate()), "bpm", timestamp);
+                addIntMetric(metricSamples, config, device, "resting_heart_rate", unsignedOrNotMeasured(sample.getRestingHeartRate()), "bpm", timestamp);
+                addIntMetric(metricSamples, config, device, "oxygen_saturation", unsignedOrNotMeasured(sample.getSpo()), "%", timestamp);
+                addIntMetric(metricSamples, config, device, "steps", sample.getSteps(), "steps", timestamp);
+                addIntMetric(metricSamples, config, device, "distance", sample.getDistance(), "m", timestamp);
+                addIntMetric(metricSamples, config, device, "calories", sample.getCalories(), "kcal", timestamp);
             }
+            uploadMetricSamples(config, device, metricSamples);
         });
     }
 
@@ -87,9 +94,11 @@ public final class HomeAssistantUploader {
                 return;
             }
 
+            final List<MetricSample> metricSamples = new ArrayList<>();
             for (final HuaweiHrvValueSample sample : copy) {
-                uploadIntMetric(config, device, "hrv_rmssd", sample.getValue(), "ms", sample.getTimestamp());
+                addIntMetric(metricSamples, config, device, "hrv_rmssd", sample.getValue(), "ms", sample.getTimestamp());
             }
+            uploadMetricSamples(config, device, metricSamples);
         });
     }
 
@@ -97,7 +106,8 @@ public final class HomeAssistantUploader {
         return GBApplication.getPrefs().getBoolean(GBPrefs.HA_UPLOAD_ENABLED, false);
     }
 
-    private static void uploadIntMetric(
+    private static void addIntMetric(
+            final List<MetricSample> metricSamples,
             final Config config,
             final GBDevice device,
             final String metric,
@@ -112,35 +122,45 @@ public final class HomeAssistantUploader {
             return;
         }
 
-        final String entityId = "sensor." + sanitizeEntityPart(config.entityPrefix + "_" + metric);
-        final JSONObject attributes = new JSONObject();
-        try {
-            attributes.put("friendly_name", friendlyName(config.entityPrefix, metric));
-            attributes.put("unit_of_measurement", unit);
-            attributes.put("state_class", "measurement");
-            attributes.put("source", "Gadgetbridge");
-            attributes.put("source_device", device.getAliasOrName());
-            attributes.put("source_address", device.getAddress());
-            attributes.put("sample_timestamp", Instant.ofEpochSecond(timestamp).toString());
-            attributes.put("sample_timestamp_unix", timestamp);
-            attributes.put("metric", metric);
-        } catch (final JSONException e) {
-            LOG.warn("Failed to build Home Assistant attributes", e);
+        metricSamples.add(new MetricSample(metric, value, unit, timestamp));
+    }
+
+    private static void uploadMetricSamples(final Config config, final GBDevice device, final List<MetricSample> metricSamples) {
+        if (metricSamples.isEmpty()) {
             return;
         }
 
+        for (int start = 0; start < metricSamples.size(); start += MAX_SAMPLES_PER_REQUEST) {
+            final int end = Math.min(start + MAX_SAMPLES_PER_REQUEST, metricSamples.size());
+            final List<MetricSample> chunk = metricSamples.subList(start, end);
+            if (postBatch(config, device, chunk)) {
+                markUploaded(config, device, chunk);
+            }
+        }
+    }
+
+    private static JSONObject buildPayload(final Config config, final GBDevice device, final List<MetricSample> metricSamples) throws JSONException {
         final JSONObject payload = new JSONObject();
-        try {
-            payload.put("state", Integer.toString(value));
-            payload.put("attributes", attributes);
-        } catch (final JSONException e) {
-            LOG.warn("Failed to build Home Assistant payload", e);
-            return;
+        final JSONObject deviceJson = new JSONObject();
+        deviceJson.put("name", device.getAliasOrName());
+        deviceJson.put("address", device.getAddress());
+
+        final JSONArray samples = new JSONArray();
+        for (final MetricSample sample : metricSamples) {
+            final JSONObject sampleJson = new JSONObject();
+            sampleJson.put("metric", sample.metric);
+            sampleJson.put("value", sample.value);
+            sampleJson.put("unit", sample.unit);
+            sampleJson.put("timestamp", Instant.ofEpochSecond(sample.timestamp).toString());
+            sampleJson.put("timestamp_unix", sample.timestamp);
+            samples.put(sampleJson);
         }
 
-        if (postState(config, entityId, payload)) {
-            setLastUploadedTimestamp(config, device, metric, timestamp);
-        }
+        payload.put("source", "gadgetbridge");
+        payload.put("entity_prefix", config.entityPrefix);
+        payload.put("device", deviceJson);
+        payload.put("samples", samples);
+        return payload;
     }
 
     private static int unsignedOrNotMeasured(final int value) {
@@ -150,10 +170,11 @@ public final class HomeAssistantUploader {
         return value & 0xff;
     }
 
-    private static boolean postState(final Config config, final String entityId, final JSONObject payload) {
+    private static boolean postBatch(final Config config, final GBDevice device, final List<MetricSample> metricSamples) {
         HttpURLConnection connection = null;
         try {
-            final URL url = new URL(config.baseUrl + "/api/states/" + entityId);
+            final JSONObject payload = buildPayload(config, device, metricSamples);
+            final URL url = new URL(config.baseUrl + INGEST_PATH);
             connection = (HttpURLConnection) url.openConnection();
             connection.setConnectTimeout(5000);
             connection.setReadTimeout(10000);
@@ -170,17 +191,34 @@ public final class HomeAssistantUploader {
 
             final int responseCode = connection.getResponseCode();
             if (responseCode < 200 || responseCode >= 300) {
-                LOG.warn("Home Assistant upload failed for {}: HTTP {}", entityId, responseCode);
+                LOG.warn("Home Assistant batch upload failed for {} samples from {}: HTTP {}", metricSamples.size(), device.getAliasOrName(), responseCode);
                 return false;
             }
             return true;
+        } catch (final JSONException e) {
+            LOG.warn("Failed to build Home Assistant batch payload", e);
+            return false;
         } catch (final IOException e) {
-            LOG.warn("Home Assistant upload failed for {}", entityId, e);
+            LOG.warn("Home Assistant batch upload failed", e);
             return false;
         } finally {
             if (connection != null) {
                 connection.disconnect();
             }
+        }
+    }
+
+    private static void markUploaded(final Config config, final GBDevice device, final List<MetricSample> metricSamples) {
+        final Map<String, Long> latestByMetric = new HashMap<>();
+        for (final MetricSample sample : metricSamples) {
+            final Long current = latestByMetric.get(sample.metric);
+            if (current == null || sample.timestamp > current) {
+                latestByMetric.put(sample.metric, sample.timestamp);
+            }
+        }
+
+        for (final Map.Entry<String, Long> entry : latestByMetric.entrySet()) {
+            setLastUploadedTimestamp(config, device, entry.getKey(), entry.getValue());
         }
     }
 
@@ -198,14 +236,24 @@ public final class HomeAssistantUploader {
         return "ha_upload_last_" + sanitizeEntityPart(config.entityPrefix + "_" + device.getAddress() + "_" + metric);
     }
 
-    private static String friendlyName(final String prefix, final String metric) {
-        return prefix.replace('_', ' ') + " " + metric.replace('_', ' ');
-    }
-
     private static String sanitizeEntityPart(final String input) {
         String sanitized = input.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_]+", "_");
         sanitized = sanitized.replaceAll("_+", "_").replaceAll("^_+|_+$", "");
         return sanitized.isEmpty() ? DEFAULT_ENTITY_PREFIX : sanitized;
+    }
+
+    private static final class MetricSample {
+        final String metric;
+        final int value;
+        final String unit;
+        final long timestamp;
+
+        private MetricSample(final String metric, final int value, final String unit, final long timestamp) {
+            this.metric = metric;
+            this.value = value;
+            this.unit = unit;
+            this.timestamp = timestamp;
+        }
     }
 
     private static final class Config {
