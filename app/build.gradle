@@ -116,7 +116,7 @@ android {
         versionCode 248
         vectorDrawables.useSupportLibrary = true
         buildConfigField "String", "GIT_HASH_SHORT", "\"${getGitHashShort()}\""
-        buildConfigField "boolean", "INTERNET_ACCESS", "false"
+        buildConfigField "boolean", "INTERNET_ACCESS", "true"
     }
 
     signingConfigs {

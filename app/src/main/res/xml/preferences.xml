@@ -369,6 +369,52 @@
             android:title="@string/healthconnect_settings" />
 
         <PreferenceScreen
+            android:icon="@drawable/ic_settings_remote"
+            android:key="pref_screen_home_assistant_upload"
+            android:title="@string/prefs_ha_upload_title"
+            android:summary="@string/prefs_ha_upload_summary">
+
+            <PreferenceCategory
+                android:key="pref_key_ha_upload"
+                android:title="@string/prefs_ha_upload_title"
+                app:iconSpaceReserved="false">
+
+                <SwitchPreferenceCompat
+                    android:defaultValue="false"
+                    android:key="ha_upload_enabled"
+                    android:layout="@layout/preference_checkbox"
+                    android:title="@string/prefs_ha_upload_enabled_title"
+                    android:summary="@string/prefs_ha_upload_enabled_summary"
+                    app:iconSpaceReserved="false" />
+
+                <EditTextPreference
+                    android:defaultValue="http://ha:8123"
+                    android:dependency="ha_upload_enabled"
+                    android:key="ha_upload_url"
+                    android:title="@string/prefs_ha_upload_url_title"
+                    app:iconSpaceReserved="false"
+                    app:useSimpleSummaryProvider="true" />
+
+                <EditTextPreference
+                    android:dependency="ha_upload_enabled"
+                    android:key="ha_upload_token"
+                    android:title="@string/prefs_ha_upload_token_title"
+                    android:summary="@string/prefs_ha_upload_token_summary"
+                    app:iconSpaceReserved="false" />
+
+                <EditTextPreference
+                    android:defaultValue="gadgetbridge_huawei"
+                    android:dependency="ha_upload_enabled"
+                    android:key="ha_upload_entity_prefix"
+                    android:title="@string/prefs_ha_upload_entity_prefix_title"
+                    android:summary="@string/prefs_ha_upload_entity_prefix_summary"
+                    app:iconSpaceReserved="false"
+                    app:useSimpleSummaryProvider="true" />
+
+            </PreferenceCategory>
+        </PreferenceScreen>
+
+        <PreferenceScreen
             android:icon="@drawable/ic_partly_cloudy_day"
             android:key="pref_screen_weather"
             android:summary="@string/pref_title_weather_summary"

@@ -122,6 +122,12 @@ public class GBPrefs extends Prefs {
     public static final String HEALTH_CONNECT_LAST_GRANTED_PERMISSIONS = "health_connect_last_granted_permissions";
     public static final String HEALTH_CONNECT_PROMPT_FOR_FULL_DAO_RESET = "health_connect_prompt_for_full_dao_reset";
 
+    // Home Assistant direct upload
+    public static final String HA_UPLOAD_ENABLED = "ha_upload_enabled";
+    public static final String HA_UPLOAD_URL = "ha_upload_url";
+    public static final String HA_UPLOAD_TOKEN = "ha_upload_token";
+    public static final String HA_UPLOAD_ENTITY_PREFIX = "ha_upload_entity_prefix";
+
     @Deprecated
     public GBPrefs(Prefs prefs) {
         this(prefs.getPreferences());

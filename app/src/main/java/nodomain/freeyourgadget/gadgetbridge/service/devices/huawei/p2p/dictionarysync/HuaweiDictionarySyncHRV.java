@@ -17,6 +17,7 @@ import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
 import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiHrvValueSample;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.p2p.HuaweiP2PDataDictionarySyncService;
+import nodomain.freeyourgadget.gadgetbridge.util.HomeAssistantUploader;
 
 public class HuaweiDictionarySyncHRV implements  HuaweiDictionarySyncInterface {
     private final Logger LOG = LoggerFactory.getLogger(HuaweiDictionarySyncHRV.class);
@@ -77,6 +78,7 @@ public class HuaweiDictionarySyncHRV implements  HuaweiDictionarySyncInterface {
         try (DBHandler db = GBApplication.acquireDB()) {
             final DaoSession session = db.getDaoSession();
             new HuaweiHrvValueSampleProvider(gbDevice, session).persistForDevice(context, gbDevice, hrvSamples);
+            HomeAssistantUploader.uploadHuaweiHrvSamples(gbDevice, hrvSamples);
         } catch (Exception e) {
             LOG.error("Cannot save HRV samples, continue");
         }

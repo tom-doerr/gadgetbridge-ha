@@ -3,10 +3,9 @@
     xmlns:tools="http://schemas.android.com/tools">
 
 
-    <!--
-        Comment in for testing Pebble Emulator
-        <uses-permission android:name="android.permission.INTERNET" />
-    -->
+    <!-- This fork uploads selected health samples directly to Home Assistant. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Used for Bluetooth access -->
     <!--
         Request legacy Bluetooth permissions on older devices.
@@ -55,9 +54,6 @@
     <!-- Read passes from FossWallet -->
     <uses-permission android:name="nz.eloque.foss_wallet.READ_CARDS"/>
     <uses-permission android:name="nz.eloque.foss_wallet.dev.READ_CARDS"/>
-
-    <!-- Make sure we don't get the INTERNET permission even when a depencency requires it -->
-    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
 
     <!-- Internet Helper -->
     <uses-permission android:name="nodomain.freeyourgadget.internethelper.INTERNET"/>

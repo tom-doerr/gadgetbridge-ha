@@ -31,6 +31,7 @@ import nodomain.freeyourgadget.gadgetbridge.devices.huawei.packets.FitnessData;
 import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiActivitySample;
 import nodomain.freeyourgadget.gadgetbridge.model.ActivitySample;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.HuaweiSupportProvider;
+import nodomain.freeyourgadget.gadgetbridge.util.HomeAssistantUploader;
 
 public class GetStepDataRequest extends Request {
     private static final Logger LOG = LoggerFactory.getLogger(GetStepDataRequest.class);
@@ -122,6 +123,7 @@ public class GetStepDataRequest extends Request {
             }
 
             sampleProvider.addGBActivitySamples(samples.toArray(new HuaweiActivitySample[0]));
+            HomeAssistantUploader.uploadHuaweiActivitySamples(supportProvider.getDevice(), samples);
         } catch (Exception e) {
             LOG.error("Failed to add step data to database", e);
         }
