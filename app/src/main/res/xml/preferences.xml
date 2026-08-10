@@ -424,6 +424,58 @@
         </PreferenceScreen>
 
         <PreferenceScreen
+            android:icon="@drawable/ic_settings_remote"
+            android:key="pref_screen_postgres_upload"
+            android:title="@string/prefs_pg_upload_title"
+            android:summary="@string/prefs_pg_upload_summary">
+
+            <PreferenceCategory
+                android:key="pref_key_pg_upload"
+                android:title="@string/prefs_pg_upload_title"
+                app:iconSpaceReserved="false">
+
+                <SwitchPreferenceCompat
+                    android:defaultValue="false"
+                    android:key="pg_upload_enabled"
+                    android:layout="@layout/preference_checkbox"
+                    android:title="@string/prefs_pg_upload_enabled_title"
+                    android:summary="@string/prefs_pg_upload_enabled_summary"
+                    app:iconSpaceReserved="false" />
+
+                <EditTextPreference
+                    android:defaultValue="jdbc:postgresql://ha:5432/gadgetbridge"
+                    android:dependency="pg_upload_enabled"
+                    android:key="pg_upload_url"
+                    android:title="@string/prefs_pg_upload_url_title"
+                    app:iconSpaceReserved="false"
+                    app:useSimpleSummaryProvider="true" />
+
+                <EditTextPreference
+                    android:dependency="pg_upload_enabled"
+                    android:key="pg_upload_user"
+                    android:title="@string/prefs_pg_upload_user_title"
+                    app:iconSpaceReserved="false"
+                    app:useSimpleSummaryProvider="true" />
+
+                <EditTextPreference
+                    android:dependency="pg_upload_enabled"
+                    android:key="pg_upload_password"
+                    android:title="@string/prefs_pg_upload_password_title"
+                    android:summary="@string/prefs_pg_upload_password_summary"
+                    app:iconSpaceReserved="false" />
+
+                <EditTextPreference
+                    android:defaultValue="gadgetbridge_samples"
+                    android:dependency="pg_upload_enabled"
+                    android:key="pg_upload_table"
+                    android:title="@string/prefs_pg_upload_table_title"
+                    app:iconSpaceReserved="false"
+                    app:useSimpleSummaryProvider="true" />
+
+            </PreferenceCategory>
+        </PreferenceScreen>
+
+        <PreferenceScreen
             android:icon="@drawable/ic_partly_cloudy_day"
             android:key="pref_screen_weather"
             android:summary="@string/pref_title_weather_summary"

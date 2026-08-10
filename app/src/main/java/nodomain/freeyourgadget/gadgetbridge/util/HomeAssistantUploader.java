@@ -39,6 +39,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
+import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
 import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiActivitySample;
 import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiHrvValueSample;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
@@ -79,28 +80,74 @@ public final class HomeAssistantUploader {
                 addIntMetric(metricSamples, config, device, "calories", sample.getCalories(), "kcal", timestamp);
             }
             uploadMetricSamples(config, device, metricSamples);
-            backfillHuaweiHrvSamples(device);
+            backfillStoredSamples(device);
         });
     }
 
     /**
-     * The HRV dictionary-sync hook only fires for newly parsed samples, so HRV
-     * recorded before HA upload was configured (or while it was failing) would
-     * never reach Home Assistant. After each activity upload, re-read the last
-     * week of stored HRV samples; the per-metric last-uploaded timestamp keeps
-     * this idempotent.
+     * Sync hooks only fire for newly parsed samples, so data recorded before HA
+     * upload was configured (or while it was failing) would never reach Home
+     * Assistant. After each activity upload, re-read the last week of stored
+     * samples; the per-metric last-uploaded timestamps keep this idempotent.
      */
-    private static void backfillHuaweiHrvSamples(final GBDevice device) {
+    private static void backfillStoredSamples(final GBDevice device) {
+        final Config config = Config.read();
+        if (!config.isUsable()) {
+            return;
+        }
+
         try (nodomain.freeyourgadget.gadgetbridge.database.DBHandler db = GBApplication.acquireDB()) {
+            final DaoSession session = db.getDaoSession();
             final long nowMs = System.currentTimeMillis();
-            final List<HuaweiHrvValueSample> samples =
-                    new nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiHrvValueSampleProvider(device, db.getDaoSession())
-                            .getAllSamples(nowMs - 7L * 24 * 60 * 60 * 1000, nowMs + 2L * 24 * 60 * 60 * 1000);
-            if (!samples.isEmpty()) {
-                uploadHuaweiHrvSamples(device, samples);
+            final long fromMs = nowMs - 7L * 24 * 60 * 60 * 1000;
+            final long toMs = nowMs + 2L * 24 * 60 * 60 * 1000;
+            final List<MetricSample> metricSamples = new ArrayList<>();
+
+            for (final HuaweiHrvValueSample sample :
+                    new nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiHrvValueSampleProvider(device, session).getAllSamples(fromMs, toMs)) {
+                addIntMetric(metricSamples, config, device, "hrv_rmssd", sample.getValue(), "ms", normalizeTimestamp(sample.getTimestamp()));
             }
+
+            for (final nodomain.freeyourgadget.gadgetbridge.entities.HuaweiTemperatureSample sample :
+                    new nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiTemperatureSampleProvider(device, session).getAllSamples(fromMs, toMs)) {
+                final double celsius = Math.round(sample.getTemperature() * 10.0) / 10.0;
+                addDoubleMetric(metricSamples, config, device, "skin_temperature", celsius, "°C", normalizeTimestamp(sample.getTimestamp()));
+            }
+
+            for (final nodomain.freeyourgadget.gadgetbridge.entities.HuaweiStressSample sample :
+                    new nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiStressSampleProvider(device, session).getAllSamples(fromMs, toMs)) {
+                final long timestamp = normalizeTimestamp(sample.getTimestamp());
+                addIntMetric(metricSamples, config, device, "stress", sample.getStress(), null, timestamp);
+                addDoubleMetric(metricSamples, config, device, "stress_level", sample.getLevel(), null, timestamp);
+            }
+
+            for (final nodomain.freeyourgadget.gadgetbridge.entities.HuaweiSleepStatsSample sample :
+                    new nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiSleepStatsSampleProvider(device, session).getAllSamples(fromMs, toMs)) {
+                final long risingTime = sample.getRisingTime();
+                final long timestamp = normalizeTimestamp(risingTime > 0 ? risingTime : sample.getTimestamp());
+                addIntMetric(metricSamples, config, device, "sleep_score", sample.getSleepScore(), null, timestamp);
+                addIntMetric(metricSamples, config, device, "sleep_efficiency", sample.getSleepEfficiency(), "%", timestamp);
+                addIntMetric(metricSamples, config, device, "sleep_latency_min", sample.getSleepLatency(), "min", timestamp);
+                addIntMetric(metricSamples, config, device, "sleep_avg_hrv", sample.getAvgHrv(), "ms", timestamp);
+                addIntMetric(metricSamples, config, device, "sleep_avg_breath_rate", sample.getAvgBreathRate(), "breaths/min", timestamp);
+                addIntMetric(metricSamples, config, device, "sleep_avg_spo2", sample.getAvgOxygenSaturation(), "%", timestamp);
+                addIntMetric(metricSamples, config, device, "sleep_avg_heart_rate", sample.getAvgHeartRate(), "bpm", timestamp);
+                addDoubleMetric(metricSamples, config, device, "sleep_snore_freq", sample.getSnoreFreq(), null, timestamp);
+                final long bedTime = sample.getBedTime();
+                if (bedTime > 0 && risingTime > bedTime) {
+                    final double hours = Math.round((normalizeTimestamp(risingTime) - normalizeTimestamp(bedTime)) / 36.0) / 100.0;
+                    addDoubleMetric(metricSamples, config, device, "sleep_duration", hours, "h", timestamp);
+                }
+            }
+
+            for (final nodomain.freeyourgadget.gadgetbridge.entities.HuaweiSleepApneaSample sample :
+                    new nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiSleepApneaSampleProvider(device, session).getAllSamples(fromMs, toMs)) {
+                addDoubleMetric(metricSamples, config, device, "sleep_apnea_level", sample.getLevel(), null, normalizeTimestamp(sample.getTimestamp()));
+            }
+
+            uploadMetricSamples(config, device, metricSamples);
         } catch (final Exception e) {
-            LOG.warn("Failed to backfill HRV samples for Home Assistant", e);
+            LOG.warn("Failed to backfill stored samples for Home Assistant", e);
         }
     }
 
@@ -131,6 +178,38 @@ public final class HomeAssistantUploader {
 
     private static boolean isEnabled() {
         return GBApplication.getPrefs().getBoolean(GBPrefs.HA_UPLOAD_ENABLED, false);
+    }
+
+    /** Serialize integral doubles as plain integers so sensor states stay "38", not "38.0". */
+    private static Object jsonNumber(final double value) {
+        if (!Double.isInfinite(value) && !Double.isNaN(value) && value == Math.rint(value)) {
+            return (long) value;
+        }
+        return value;
+    }
+
+    /** Huawei sample tables store epoch milliseconds; the upload pipeline uses epoch seconds. */
+    private static long normalizeTimestamp(final long timestamp) {
+        return timestamp > 10_000_000_000L ? timestamp / 1000L : timestamp;
+    }
+
+    private static void addDoubleMetric(
+            final List<MetricSample> metricSamples,
+            final Config config,
+            final GBDevice device,
+            final String metric,
+            final double value,
+            final String unit,
+            final long timestamp
+    ) {
+        if (Double.isNaN(value) || value < 0 || timestamp <= 0) {
+            return;
+        }
+        if (timestamp <= getLastUploadedTimestamp(config, device, metric)) {
+            return;
+        }
+
+        metricSamples.add(new MetricSample(metric, value, unit, timestamp));
     }
 
     private static void addIntMetric(
@@ -209,7 +288,7 @@ public final class HomeAssistantUploader {
             attributes.put("sample_timestamp_unix", sample.timestamp);
 
             final JSONObject payload = new JSONObject();
-            payload.put("state", sample.value);
+            payload.put("state", jsonNumber(sample.value));
             payload.put("attributes", attributes);
 
             final URL url = new URL(config.baseUrl + "/api/states/" + entityId);
@@ -256,7 +335,7 @@ public final class HomeAssistantUploader {
         for (final MetricSample sample : metricSamples) {
             final JSONObject sampleJson = new JSONObject();
             sampleJson.put("metric", sample.metric);
-            sampleJson.put("value", sample.value);
+            sampleJson.put("value", jsonNumber(sample.value));
             sampleJson.put("unit", sample.unit);
             sampleJson.put("timestamp", Instant.ofEpochSecond(sample.timestamp).toString());
             sampleJson.put("timestamp_unix", sample.timestamp);
@@ -351,11 +430,11 @@ public final class HomeAssistantUploader {
 
     private static final class MetricSample {
         final String metric;
-        final int value;
+        final double value;
         final String unit;
         final long timestamp;
 
-        private MetricSample(final String metric, final int value, final String unit, final long timestamp) {
+        private MetricSample(final String metric, final double value, final String unit, final long timestamp) {
             this.metric = metric;
             this.value = value;
             this.unit = unit;

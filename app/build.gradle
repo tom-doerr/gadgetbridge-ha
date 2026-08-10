@@ -109,7 +109,7 @@ android {
         //noinspection OldTargetApi
         targetSdk = 34
         // Note: update sourceCompatibility and targetCompatibility when changing minSdk
-        minSdk = 23
+        minSdk = 26 // raised from 23: pgjdbc requires API 26+
 
         // Note: always bump BOTH versionCode and versionName!
         versionName "0.91.1"
@@ -236,6 +236,7 @@ android {
 }
 
 dependencies {
+    implementation 'org.postgresql:postgresql:42.7.4'
     coreLibraryDesugaring libs.desugar.jdk.libs
 
     implementation libs.androidx.constraintlayout

@@ -4831,6 +4831,15 @@
     <string name="prefs_ha_upload_token_summary">Create one in Home Assistant: open the HA web UI, click your user name in the bottom-left sidebar, switch to the Security tab, scroll to &#8220;Long-lived access tokens&#8221;, tap &#8220;Create token&#8221;, copy it and paste it here. It is stored only in this app\'s preferences.</string>
     <string name="prefs_ha_upload_entity_prefix_title">Entity prefix</string>
     <string name="prefs_ha_upload_entity_prefix_summary">Creates sensor.&lt;prefix&gt;_heart_rate, sensor.&lt;prefix&gt;_hrv_rmssd, and related sensors</string>
+    <string name="prefs_pg_upload_title">PostgreSQL upload</string>
+    <string name="prefs_pg_upload_summary">Upload the complete sample history (activity, HRV, temperature, stress, sleep, workouts) to a PostgreSQL database</string>
+    <string name="prefs_pg_upload_enabled_title">Enable PostgreSQL upload</string>
+    <string name="prefs_pg_upload_enabled_summary">After each sync, incrementally upload all stored samples. The full history is backfilled over the first few syncs.</string>
+    <string name="prefs_pg_upload_url_title">JDBC URL</string>
+    <string name="prefs_pg_upload_user_title">Database user</string>
+    <string name="prefs_pg_upload_password_title">Database password</string>
+    <string name="prefs_pg_upload_password_summary">Stored only in this app\'s preferences</string>
+    <string name="prefs_pg_upload_table_title">Table name</string>
     <string name="prefs_ha_upload_states_mode_title">Direct sensor updates (no custom component)</string>
     <string name="prefs_ha_upload_states_mode_summary">Use Home Assistant\'s built-in REST API to set sensor states with the newest value after each sync. Works without the gadgetbridge_ingest component, but HA will not store per-sample history.</string>
     <string name="pref_health_connect_enabled">Enable Health Connect Export</string>
