@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Gadgetbridge HA</string>
+    <!-- Namespace the hardcoded Pebble provider authority so the .ha build
+         can be installed alongside a stock Gadgetbridge (Pebble compat unused here). -->
+    <string name="pebble_content_provider">com.getpebble.android.provider.ha</string>
+</resources>

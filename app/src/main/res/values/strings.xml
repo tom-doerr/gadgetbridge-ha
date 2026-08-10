@@ -4828,9 +4828,11 @@
     <string name="prefs_ha_upload_enabled_summary">Sends selected Huawei health samples to the Gadgetbridge ingest endpoint in Home Assistant</string>
     <string name="prefs_ha_upload_url_title">Home Assistant URL</string>
     <string name="prefs_ha_upload_token_title">Long-lived access token</string>
-    <string name="prefs_ha_upload_token_summary">Stored in Gadgetbridge app preferences; never hard-code this in the repository</string>
+    <string name="prefs_ha_upload_token_summary">Create one in Home Assistant: open the HA web UI, click your user name in the bottom-left sidebar, switch to the Security tab, scroll to &#8220;Long-lived access tokens&#8221;, tap &#8220;Create token&#8221;, copy it and paste it here. It is stored only in this app\'s preferences.</string>
     <string name="prefs_ha_upload_entity_prefix_title">Entity prefix</string>
     <string name="prefs_ha_upload_entity_prefix_summary">Creates sensor.&lt;prefix&gt;_heart_rate, sensor.&lt;prefix&gt;_hrv_rmssd, and related sensors</string>
+    <string name="prefs_ha_upload_states_mode_title">Direct sensor updates (no custom component)</string>
+    <string name="prefs_ha_upload_states_mode_summary">Use Home Assistant\'s built-in REST API to set sensor states with the newest value after each sync. Works without the gadgetbridge_ingest component, but HA will not store per-sample history.</string>
     <string name="pref_health_connect_enabled">Enable Health Connect Export</string>
     <string name="pref_health_connect_manual_settings">Manage Health Connect Data</string>
     <string name="pref_health_connect_settings">Health Connect Settings</string>

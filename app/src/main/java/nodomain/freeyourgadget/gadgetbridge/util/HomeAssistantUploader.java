@@ -79,7 +79,29 @@ public final class HomeAssistantUploader {
                 addIntMetric(metricSamples, config, device, "calories", sample.getCalories(), "kcal", timestamp);
             }
             uploadMetricSamples(config, device, metricSamples);
+            backfillHuaweiHrvSamples(device);
         });
+    }
+
+    /**
+     * The HRV dictionary-sync hook only fires for newly parsed samples, so HRV
+     * recorded before HA upload was configured (or while it was failing) would
+     * never reach Home Assistant. After each activity upload, re-read the last
+     * week of stored HRV samples; the per-metric last-uploaded timestamp keeps
+     * this idempotent.
+     */
+    private static void backfillHuaweiHrvSamples(final GBDevice device) {
+        try (nodomain.freeyourgadget.gadgetbridge.database.DBHandler db = GBApplication.acquireDB()) {
+            final long nowMs = System.currentTimeMillis();
+            final List<HuaweiHrvValueSample> samples =
+                    new nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiHrvValueSampleProvider(device, db.getDaoSession())
+                            .getAllSamples(nowMs - 7L * 24 * 60 * 60 * 1000, nowMs + 2L * 24 * 60 * 60 * 1000);
+            if (!samples.isEmpty()) {
+                uploadHuaweiHrvSamples(device, samples);
+            }
+        } catch (final Exception e) {
+            LOG.warn("Failed to backfill HRV samples for Home Assistant", e);
+        }
     }
 
     public static void uploadHuaweiHrvSamples(final GBDevice device, final List<HuaweiHrvValueSample> samples) {
@@ -96,7 +118,12 @@ public final class HomeAssistantUploader {
 
             final List<MetricSample> metricSamples = new ArrayList<>();
             for (final HuaweiHrvValueSample sample : copy) {
-                addIntMetric(metricSamples, config, device, "hrv_rmssd", sample.getValue(), "ms", sample.getTimestamp());
+                // HuaweiHrvValueSample timestamps are in milliseconds; normalize to epoch seconds
+                long timestampSeconds = sample.getTimestamp();
+                if (timestampSeconds > 10_000_000_000L) {
+                    timestampSeconds /= 1000L;
+                }
+                addIntMetric(metricSamples, config, device, "hrv_rmssd", sample.getValue(), "ms", timestampSeconds);
             }
             uploadMetricSamples(config, device, metricSamples);
         });
@@ -130,11 +157,91 @@ public final class HomeAssistantUploader {
             return;
         }
 
+        if (config.statesMode) {
+            uploadLatestStates(config, device, metricSamples);
+            return;
+        }
+
         for (int start = 0; start < metricSamples.size(); start += MAX_SAMPLES_PER_REQUEST) {
             final int end = Math.min(start + MAX_SAMPLES_PER_REQUEST, metricSamples.size());
             final List<MetricSample> chunk = metricSamples.subList(start, end);
             if (postBatch(config, device, chunk)) {
                 markUploaded(config, device, chunk);
+            }
+        }
+    }
+
+    /**
+     * Component-free mode: update sensor.<prefix>_<metric> via Home Assistant's
+     * built-in /api/states REST API with the newest value per metric. No custom
+     * component required; HA records history at receipt time, so per-sample
+     * timestamps are only preserved as attributes.
+     */
+    private static void uploadLatestStates(final Config config, final GBDevice device, final List<MetricSample> metricSamples) {
+        final Map<String, MetricSample> latestByMetric = new HashMap<>();
+        for (final MetricSample sample : metricSamples) {
+            final MetricSample current = latestByMetric.get(sample.metric);
+            if (current == null || sample.timestamp > current.timestamp) {
+                latestByMetric.put(sample.metric, sample);
+            }
+        }
+
+        for (final MetricSample sample : latestByMetric.values()) {
+            if (postState(config, device, sample)) {
+                setLastUploadedTimestamp(config, device, sample.metric, sample.timestamp);
+            }
+        }
+    }
+
+    private static boolean postState(final Config config, final GBDevice device, final MetricSample sample) {
+        HttpURLConnection connection = null;
+        try {
+            final String entityId = "sensor." + sanitizeEntityPart(config.entityPrefix + "_" + sample.metric);
+
+            final JSONObject attributes = new JSONObject();
+            attributes.put("unit_of_measurement", sample.unit);
+            attributes.put("friendly_name", (config.entityPrefix + " " + sample.metric).replace('_', ' '));
+            attributes.put("state_class", "measurement");
+            attributes.put("source", "gadgetbridge");
+            attributes.put("source_device", device.getAliasOrName());
+            attributes.put("source_address", device.getAddress());
+            attributes.put("sample_timestamp", Instant.ofEpochSecond(sample.timestamp).toString());
+            attributes.put("sample_timestamp_unix", sample.timestamp);
+
+            final JSONObject payload = new JSONObject();
+            payload.put("state", sample.value);
+            payload.put("attributes", attributes);
+
+            final URL url = new URL(config.baseUrl + "/api/states/" + entityId);
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setConnectTimeout(5000);
+            connection.setReadTimeout(10000);
+            connection.setRequestMethod("POST");
+            connection.setDoOutput(true);
+            connection.setRequestProperty("Authorization", "Bearer " + config.token);
+            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+
+            final byte[] body = payload.toString().getBytes(StandardCharsets.UTF_8);
+            connection.setFixedLengthStreamingMode(body.length);
+            try (OutputStream outputStream = connection.getOutputStream()) {
+                outputStream.write(body);
+            }
+
+            final int responseCode = connection.getResponseCode();
+            if (responseCode < 200 || responseCode >= 300) {
+                LOG.warn("Home Assistant state update failed for {} from {}: HTTP {}", entityId, device.getAliasOrName(), responseCode);
+                return false;
+            }
+            return true;
+        } catch (final JSONException e) {
+            LOG.warn("Failed to build Home Assistant state payload", e);
+            return false;
+        } catch (final IOException e) {
+            LOG.warn("Home Assistant state update failed", e);
+            return false;
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
             }
         }
     }
@@ -260,11 +367,13 @@ public final class HomeAssistantUploader {
         final String baseUrl;
         final String token;
         final String entityPrefix;
+        final boolean statesMode;
 
-        private Config(final String baseUrl, final String token, final String entityPrefix) {
+        private Config(final String baseUrl, final String token, final String entityPrefix, final boolean statesMode) {
             this.baseUrl = trimTrailingSlash(baseUrl);
             this.token = token == null ? "" : token.trim();
             this.entityPrefix = sanitizeEntityPart(entityPrefix == null || entityPrefix.isEmpty() ? DEFAULT_ENTITY_PREFIX : entityPrefix);
+            this.statesMode = statesMode;
         }
 
         static Config read() {
@@ -272,7 +381,8 @@ public final class HomeAssistantUploader {
             return new Config(
                     prefs.getString(GBPrefs.HA_UPLOAD_URL, DEFAULT_HA_URL),
                     prefs.getString(GBPrefs.HA_UPLOAD_TOKEN, ""),
-                    prefs.getString(GBPrefs.HA_UPLOAD_ENTITY_PREFIX, DEFAULT_ENTITY_PREFIX)
+                    prefs.getString(GBPrefs.HA_UPLOAD_ENTITY_PREFIX, DEFAULT_ENTITY_PREFIX),
+                    prefs.getBoolean(GBPrefs.HA_UPLOAD_STATES_MODE, false)
             );
         }
 

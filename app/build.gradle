@@ -100,7 +100,7 @@ android {
 
     namespace = 'nodomain.freeyourgadget.gadgetbridge'
     compileSdk = 36
-    buildToolsVersion = '36.0.0'
+    buildToolsVersion = '36.1.0'
 
     defaultConfig {
         applicationId "nodomain.freeyourgadget.gadgetbridge"
@@ -159,6 +159,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix ".ha"
+            versionNameSuffix "-ha"
+        }
+
         release {
             minifyEnabled true
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"

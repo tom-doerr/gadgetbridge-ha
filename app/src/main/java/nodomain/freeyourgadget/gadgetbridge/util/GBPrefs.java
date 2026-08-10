@@ -127,6 +127,7 @@ public class GBPrefs extends Prefs {
     public static final String HA_UPLOAD_URL = "ha_upload_url";
     public static final String HA_UPLOAD_TOKEN = "ha_upload_token";
     public static final String HA_UPLOAD_ENTITY_PREFIX = "ha_upload_entity_prefix";
+    public static final String HA_UPLOAD_STATES_MODE = "ha_upload_states_mode";
 
     @Deprecated
     public GBPrefs(Prefs prefs) {

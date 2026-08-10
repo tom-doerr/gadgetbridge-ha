@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Fork-only branding: purple everywhere so the HA build is instantly
+         distinguishable from stock Gadgetbridge (blue icon, orange toolbar). -->
+    <color name="ic_launcher_background">#6A1B9A</color>
+    <color name="primary_light">#7B1FA2</color>
+    <color name="primarydark_light">#4A148C</color>
+    <color name="primary_dark">#7B1FA2</color>
+    <color name="primarydark_dark">#4A148C</color>
+    <color name="accent">#D500F9</color>
+</resources>
