@@ -4840,8 +4840,6 @@
     <string name="prefs_pg_upload_password_title">Database password</string>
     <string name="prefs_pg_upload_password_summary">Stored only in this app\'s preferences</string>
     <string name="prefs_pg_upload_table_title">Table name</string>
-    <string name="prefs_ha_upload_states_mode_title">Direct sensor updates (no custom component)</string>
-    <string name="prefs_ha_upload_states_mode_summary">Use Home Assistant\'s built-in REST API to set sensor states with the newest value after each sync. Works without the gadgetbridge_ingest component, but HA will not store per-sample history.</string>
     <string name="pref_health_connect_enabled">Enable Health Connect Export</string>
     <string name="pref_health_connect_manual_settings">Manage Health Connect Data</string>
     <string name="pref_health_connect_settings">Health Connect Settings</string>

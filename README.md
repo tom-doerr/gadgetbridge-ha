@@ -1,119 +1,103 @@
-Gadgetbridge is hosted on [codeberg.org](https://codeberg.org/Freeyourgadget/Gadgetbridge/).
+# Gadgetbridge HA
 
+A fork of [Gadgetbridge](https://codeberg.org/Freeyourgadget/Gadgetbridge) that uploads
+watch sensor data to **Home Assistant** and to **PostgreSQL**.
 
-Gadgetbridge
-============
+Upstream Gadgetbridge deliberately ships without the `INTERNET` permission — keeping your
+health data on the device is a core part of its design. This fork breaks that rule on
+purpose, so it is a permanent divergence rather than something that could be merged
+upstream. If you do not want your watch data leaving the phone, use upstream Gadgetbridge.
 
-Gadgetbridge is an Android application which will allow you to use your
-Bluetooth gadgets (mostly wearables like smart watches, but many more) without the vendor's closed source application
-and without the need to create an account and transmit any of your data to the
-vendor's servers.
+Developed against a **Huawei Watch GT 6 Pro**; the upload hooks sit in the Huawei sync
+path, so other vendors are not wired up.
 
-[Homepage](https://gadgetbridge.org) - [Blog](https://blog.freeyourgadget.org) - <a rel="me" href="https://social.anoxinon.de/@gadgetbridge">Mastodon</a>
+## What it adds
 
-[![Donate](https://liberapay.com/assets/widgets/donate.svg)](https://liberapay.com/Gadgetbridge/donate)
+### Home Assistant
 
+After each sync, the newest value per metric is pushed to Home Assistant's built-in
+`POST /api/states/<entity_id>` REST API. No custom component or add-on is required.
+Entities are named `sensor.<prefix>_<metric>`, and each carries the true measurement
+time in the `sample_timestamp` / `sample_timestamp_unix` attributes.
 
-[![Translate](https://hosted.weblate.org/widgets/freeyourgadget/-/gadgetbridge/svg-badge.svg)](https://hosted.weblate.org/projects/freeyourgadget/gadgetbridge)
+Metrics: `heart_rate`, `resting_heart_rate`, `oxygen_saturation`, `steps`, `distance`,
+`calories`, `hrv_rmssd`, `skin_temperature`, `stress`, `stress_level`, `sleep_score`,
+`sleep_efficiency`, `sleep_latency_min`, `sleep_avg_hrv`, `sleep_avg_breath_rate`,
+`sleep_avg_spo2`, `sleep_avg_heart_rate`, `sleep_snore_freq`, `sleep_duration`,
+`sleep_apnea_level`.
 
-## Download
+Because HA timestamps a state change when it arrives, its recorder history shows upload
+time rather than measurement time, and intermediate samples in a batch are not kept.
+Use the PostgreSQL sink if you want the real series.
 
-<a href="https://f-droid.org/app/nodomain.freeyourgadget.gadgetbridge">
-    <img alt="Get it on F-Droid" src="https://gadgetbridge.org/assets/static/get-it-on-fdroid.png" height="60">
-</a>
+**Setup** — Settings → *Home Assistant upload*:
 
-<a href="https://apt.izzysoft.de/fdroid/index/apk/nodomain.freeyourgadget.gadgetbridge">
-    <img alt="Get it on IzzyOnDroid" src="https://gitlab.com/IzzyOnDroid/repo/-/raw/master/assets/IzzyOnDroidButtonGreyBorder_nofont.png" height="60">
-</a>
+| Field | Value |
+|---|---|
+| URL | e.g. `http://homeassistant.local:8123` (an IP is more robust than a hostname if the phone's DNS varies) |
+| Token | HA → your user (bottom-left) → *Security* → *Long-lived access tokens* → *Create token* |
+| Entity prefix | default `gadgetbridge_huawei` |
 
-<a href="https://codeberg.org/Freeyourgadget/Gadgetbridge/releases/">
-    <img alt="Get it on Codeberg" src="https://get-it-on.codeberg.org/get-it-on-white-on-black.png" height="60">
-</a>
-<br><br>
+### PostgreSQL
 
-[<img src="https://shields.rbtlog.dev/simple/nodomain.freeyourgadget.gadgetbridge" alt="RB Status">](https://shields.rbtlog.dev/nodomain.freeyourgadget.gadgetbridge)
+The full sample history — including the high-volume series that do not fit HA's sensor
+model — is batch-upserted into one long-format table:
 
-- [Nightly releases](https://freeyourgadget.codeberg.page/fdroid/repo?fingerprint=CD381ECCC465AB324E21BCC335895615E07E70EE11E9FD1DF3C020C5194F00B2)
-    - Nightly releases are updated more frequently and may be less stable than standard releases, and they are distributed by our F-Droid repository unlike standard releases. 
-- [List of changes](https://codeberg.org/Freeyourgadget/Gadgetbridge/src/master/CHANGELOG.md)
+```sql
+gadgetbridge_samples (device_address text, metric text, sample_ts timestamptz,
+                      value double precision, unit text,
+                      primary key (device_address, metric, sample_ts))
+```
 
-## Supported Devices
+The table and its `(metric, sample_ts)` index are created automatically on first run.
+Beyond the HA metrics above this also stores `raw_intensity`, the per-minute
+`sleep_stage` timeline, `sleep_deep_part`, and workout data (`workout_heart_rate`,
+`workout_speed`, `workout_step_rate`, `workout_cadence`, plus per-workout summaries).
 
-Please see the [Gadgets](https://gadgetbridge.org/gadgets/) page on the website for a complete list of supported devices.
+A persisted per-source cursor walks the history in 30-day windows, capped per run, so
+the first syncs backfill everything without blocking the phone and later syncs stay
+incremental. Inserts use `ON CONFLICT DO NOTHING`, so re-runs are idempotent.
 
-## Features
+**Setup** — Settings → *PostgreSQL upload*: JDBC URL
+(`jdbc:postgresql://host:5432/dbname`), user, password, table name. The server must
+accept connections from the phone.
 
-Please see the [Features](https://gadgetbridge.org/basics/features/) page on the website.
+The long format keeps Grafana panels to one query each:
 
-## Authors
-### Core Team (in order of first code contribution)
+```sql
+SELECT sample_ts AS time, value FROM gadgetbridge_samples
+WHERE metric = 'hrv_rmssd' ORDER BY 1;
+```
 
-* Andreas Shimokawa
-* Carsten Pfeiffer
-* Daniele Gobbetti
-* Petr Vaněk
+## Building
 
-### Additional contributors
-* João Paulo Barraca (HPlus)
-* Vitaly Svyastyn (NO.1 F1)
-* Sami Alaoui (Teclast H30)
-* "ladbsoft" (XWatch)
-* Sebastian Kranz (ZeTime)
-* Vadim Kaushan (ID115)
-* "maxirnilian" (Lenovo Watch 9)
-* "ksiwczynski", "mkusnierz", "mamutcho" (Lenovo Watch X Plus)
-* Andreas Böhler (Casio)
-* Jean-François Greffier (Mi Scale 2)
-* Johannes Schmitt (BFH-16)
-* Lukas Schwichtenberg (Makibes HR3)
-* Daniel Dakhno (Fossil Q Hybrid, Fossil Hybrid HR)
-* Gordon Williams (Bangle.js)
-* Pavel Elagin (JYou Y5)
-* Taavi Eomäe (iTag)
-* Erik Bloß (TLW64)
-* Yukai Li (Lefun)
-* José Rebelo (Roidmi, Sony Headphones, Miband 7)
-* Arjan Schrijver (Fossil Hybrid HR watchfaces)
+Standard Gadgetbridge build (`./gradlew assembleMainlineDebug`), with two fork-specific
+constraints:
 
-## Contribute
+- **`minSdk` is 26** (upstream: 23), because the PostgreSQL JDBC driver needs it.
+- **pgjdbc is pinned to 42.2.8.** Releases from 42.2.9 onward call
+  `java.lang.management.ManagementFactory` on every connect, which Android does not
+  ship, producing `NoClassDefFoundError`. Do not bump this without re-testing on device.
 
-Contributions are welcome, be it feedback, bug reports, documentation, translation, research or code. Feel free to work
-on any of the open [issues](https://codeberg.org/Freeyourgadget/Gadgetbridge/issues);
-just leave a comment that you're working on one to avoid duplicated work.
+Debug builds use the application ID suffix `.ha` and are labelled *Gadgetbridge HA* with
+a purple icon, so the fork installs alongside a stock Gadgetbridge instead of replacing
+it. Note that only one app can hold the watch's Bluetooth connection at a time — if both
+are installed and running they will fight over it, so disable the one you are not using.
 
-[Developer documentation](https://gadgetbridge.org/internals/development/project-overview/) - [Support for a new Device](https://gadgetbridge.org/internals/topics/support/) - [New Device Tutorial](https://gadgetbridge.org/internals/development/new-gadget/)
+Uploads run after each sync. A sync can be triggered externally with:
 
-Translations can be contributed via https://hosted.weblate.org/projects/freeyourgadget/gadgetbridge/
+```
+am broadcast --user 0 -p nodomain.freeyourgadget.gadgetbridge.ha \
+  -a nodomain.freeyourgadget.gadgetbridge.command.ACTIVITY_SYNC
+```
 
-## Community
+(requires *Intent API* → *Allow activity sync via intents* in settings)
 
-If you would like to get in touch with other Gadgetbridge users and developers outside of Codeberg, you can do so via:
-* Matrix: [`#gadgetbridge:matrix.org`](https://matrix.to/#/#gadgetbridge:matrix.org)
+## Credit and licence
 
-## Do you have further questions or feedback?
+All of the hard work — the Bluetooth protocol reverse engineering that makes any of this
+possible — belongs to the [Gadgetbridge](https://codeberg.org/Freeyourgadget/Gadgetbridge)
+project and its contributors. This fork only adds two upload sinks on top.
 
-Feel free to open an issue on our issue tracker, but please:
-- do not use the issue tracker as a forum, do not ask for ETAs and read the issue conversation before posting
-- use the search functionality to ensure that your question wasn't already answered. Don't forget to check the **closed** issues as well!
-- remember that this is a community project, people are contributing in their free time because they like doing so: don't take the fun away! Be kind and constructive.
-- Do not ask for help regarding your own projects, unless they are Gadgetbridge related
-
-## Having problems?
-
-0. Phone crashing during device discovery? Disable Privacy Guard (or similarly named functionality) during discovery.
-1. Open Gadgetbridge's settings and check the option to write log files
-2. Reproduce the problem you encountered
-3. Check the logfile at /sdcard/Android/data/nodomain.freeyourgadget.gadgetbridge/files/gadgetbridge.log
-4. File an issue at https://codeberg.org/Freeyourgadget/Gadgetbridge/issues/new/choose and possibly provide the logfile
-
-Alternatively you may use the standard logcat functionality to access the log.
-
-## Code Licenses
-
-* Gadgetbridge is licensed under the [AGPLv3](LICENSE)
-* Files in app/src/main/java/net/osmand/ and app/src/main/aidl/net/osmand/ are taken from the [OsmAnd](https://osmand.net/) project, licensed under the GPLv3 by OsmAnd BV
-* Files in app/src/main/java/org/bouncycastle are taken from the [Bouncy Castle](https://www.bouncycastle.org/java.html) project, licensed under the MIT license by The Legion of the Bouncy Castle Inc.
-* Files in app/src/main/java/com/android/nQuant are taken from the [nQuant.android](https://github.com/mcychan/nQuant.android/) project, licensed under the Apache license by Miller Cy Chan
-* Files in app/src/main/java/org/concentus are taken from the [Concentus](https://github.com/lostromb/concentus) project, licensed under the BSD-3 license by various holding parties
-* Files in GBDaoGenerator/src/de/greenrobot are taken from the [greenDAO](https://codeberg.org/Freeyourgadget/greenDAO) project (Gadgetbridge's fork), licensed under the GPLv3 by Markus Junginger, greenrobot
-* File app/src/main/java/nodomain/freeyourgadget/gadgetbridge/util/SearchPreferenceHighlighter.java is taken from [SearchPreference](https://github.com/ByteHamster/SearchPreference), licensed under the MIT license by ByteHamster
+Licensed under the **GNU Affero General Public License v3.0**, the same licence as
+upstream. See [LICENSE](LICENSE); artwork terms are in [LICENSE.artwork](LICENSE.artwork).

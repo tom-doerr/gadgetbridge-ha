@@ -18,7 +18,6 @@ package nodomain.freeyourgadget.gadgetbridge.util;
 
 import android.content.SharedPreferences;
 
-import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.slf4j.Logger;
@@ -51,8 +50,6 @@ public final class HomeAssistantUploader {
 
     private static final String DEFAULT_HA_URL = "http://ha:8123";
     private static final String DEFAULT_ENTITY_PREFIX = "gadgetbridge_huawei";
-    private static final String INGEST_PATH = "/api/gadgetbridge_ingest/samples";
-    private static final int MAX_SAMPLES_PER_REQUEST = 500;
 
     private HomeAssistantUploader() {
     }
@@ -236,25 +233,14 @@ public final class HomeAssistantUploader {
             return;
         }
 
-        if (config.statesMode) {
-            uploadLatestStates(config, device, metricSamples);
-            return;
-        }
-
-        for (int start = 0; start < metricSamples.size(); start += MAX_SAMPLES_PER_REQUEST) {
-            final int end = Math.min(start + MAX_SAMPLES_PER_REQUEST, metricSamples.size());
-            final List<MetricSample> chunk = metricSamples.subList(start, end);
-            if (postBatch(config, device, chunk)) {
-                markUploaded(config, device, chunk);
-            }
-        }
+        uploadLatestStates(config, device, metricSamples);
     }
 
     /**
-     * Component-free mode: update sensor.<prefix>_<metric> via Home Assistant's
-     * built-in /api/states REST API with the newest value per metric. No custom
-     * component required; HA records history at receipt time, so per-sample
-     * timestamps are only preserved as attributes.
+     * Update sensor.<prefix>_<metric> via Home Assistant's built-in /api/states
+     * REST API with the newest value per metric. HA records history at receipt
+     * time, so exact per-sample timestamps survive only as attributes; the
+     * PostgreSQL sink is what stores the full timestamped series.
      */
     private static void uploadLatestStates(final Config config, final GBDevice device, final List<MetricSample> metricSamples) {
         final Map<String, MetricSample> latestByMetric = new HashMap<>();
@@ -325,87 +311,11 @@ public final class HomeAssistantUploader {
         }
     }
 
-    private static JSONObject buildPayload(final Config config, final GBDevice device, final List<MetricSample> metricSamples) throws JSONException {
-        final JSONObject payload = new JSONObject();
-        final JSONObject deviceJson = new JSONObject();
-        deviceJson.put("name", device.getAliasOrName());
-        deviceJson.put("address", device.getAddress());
-
-        final JSONArray samples = new JSONArray();
-        for (final MetricSample sample : metricSamples) {
-            final JSONObject sampleJson = new JSONObject();
-            sampleJson.put("metric", sample.metric);
-            sampleJson.put("value", jsonNumber(sample.value));
-            sampleJson.put("unit", sample.unit);
-            sampleJson.put("timestamp", Instant.ofEpochSecond(sample.timestamp).toString());
-            sampleJson.put("timestamp_unix", sample.timestamp);
-            samples.put(sampleJson);
-        }
-
-        payload.put("source", "gadgetbridge");
-        payload.put("entity_prefix", config.entityPrefix);
-        payload.put("device", deviceJson);
-        payload.put("samples", samples);
-        return payload;
-    }
-
     private static int unsignedOrNotMeasured(final int value) {
         if (value == ActivitySample.NOT_MEASURED) {
             return ActivitySample.NOT_MEASURED;
         }
         return value & 0xff;
-    }
-
-    private static boolean postBatch(final Config config, final GBDevice device, final List<MetricSample> metricSamples) {
-        HttpURLConnection connection = null;
-        try {
-            final JSONObject payload = buildPayload(config, device, metricSamples);
-            final URL url = new URL(config.baseUrl + INGEST_PATH);
-            connection = (HttpURLConnection) url.openConnection();
-            connection.setConnectTimeout(5000);
-            connection.setReadTimeout(10000);
-            connection.setRequestMethod("POST");
-            connection.setDoOutput(true);
-            connection.setRequestProperty("Authorization", "Bearer " + config.token);
-            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-
-            final byte[] body = payload.toString().getBytes(StandardCharsets.UTF_8);
-            connection.setFixedLengthStreamingMode(body.length);
-            try (OutputStream outputStream = connection.getOutputStream()) {
-                outputStream.write(body);
-            }
-
-            final int responseCode = connection.getResponseCode();
-            if (responseCode < 200 || responseCode >= 300) {
-                LOG.warn("Home Assistant batch upload failed for {} samples from {}: HTTP {}", metricSamples.size(), device.getAliasOrName(), responseCode);
-                return false;
-            }
-            return true;
-        } catch (final JSONException e) {
-            LOG.warn("Failed to build Home Assistant batch payload", e);
-            return false;
-        } catch (final IOException e) {
-            LOG.warn("Home Assistant batch upload failed", e);
-            return false;
-        } finally {
-            if (connection != null) {
-                connection.disconnect();
-            }
-        }
-    }
-
-    private static void markUploaded(final Config config, final GBDevice device, final List<MetricSample> metricSamples) {
-        final Map<String, Long> latestByMetric = new HashMap<>();
-        for (final MetricSample sample : metricSamples) {
-            final Long current = latestByMetric.get(sample.metric);
-            if (current == null || sample.timestamp > current) {
-                latestByMetric.put(sample.metric, sample.timestamp);
-            }
-        }
-
-        for (final Map.Entry<String, Long> entry : latestByMetric.entrySet()) {
-            setLastUploadedTimestamp(config, device, entry.getKey(), entry.getValue());
-        }
     }
 
     private static long getLastUploadedTimestamp(final Config config, final GBDevice device, final String metric) {
@@ -446,13 +356,11 @@ public final class HomeAssistantUploader {
         final String baseUrl;
         final String token;
         final String entityPrefix;
-        final boolean statesMode;
 
-        private Config(final String baseUrl, final String token, final String entityPrefix, final boolean statesMode) {
+        private Config(final String baseUrl, final String token, final String entityPrefix) {
             this.baseUrl = trimTrailingSlash(baseUrl);
             this.token = token == null ? "" : token.trim();
             this.entityPrefix = sanitizeEntityPart(entityPrefix == null || entityPrefix.isEmpty() ? DEFAULT_ENTITY_PREFIX : entityPrefix);
-            this.statesMode = statesMode;
         }
 
         static Config read() {
@@ -460,8 +368,7 @@ public final class HomeAssistantUploader {
             return new Config(
                     prefs.getString(GBPrefs.HA_UPLOAD_URL, DEFAULT_HA_URL),
                     prefs.getString(GBPrefs.HA_UPLOAD_TOKEN, ""),
-                    prefs.getString(GBPrefs.HA_UPLOAD_ENTITY_PREFIX, DEFAULT_ENTITY_PREFIX),
-                    prefs.getBoolean(GBPrefs.HA_UPLOAD_STATES_MODE, false)
+                    prefs.getString(GBPrefs.HA_UPLOAD_ENTITY_PREFIX, DEFAULT_ENTITY_PREFIX)
             );
         }
 

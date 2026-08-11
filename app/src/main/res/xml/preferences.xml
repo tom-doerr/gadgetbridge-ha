@@ -402,15 +402,6 @@
                     android:summary="@string/prefs_ha_upload_token_summary"
                     app:iconSpaceReserved="false" />
 
-                <SwitchPreferenceCompat
-                    android:defaultValue="false"
-                    android:dependency="ha_upload_enabled"
-                    android:key="ha_upload_states_mode"
-                    android:layout="@layout/preference_checkbox"
-                    android:title="@string/prefs_ha_upload_states_mode_title"
-                    android:summary="@string/prefs_ha_upload_states_mode_summary"
-                    app:iconSpaceReserved="false" />
-
                 <EditTextPreference
                     android:defaultValue="gadgetbridge_huawei"
                     android:dependency="ha_upload_enabled"
