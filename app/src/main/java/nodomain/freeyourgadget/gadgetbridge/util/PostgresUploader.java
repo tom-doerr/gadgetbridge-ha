@@ -72,7 +72,7 @@ public final class PostgresUploader {
     private static final AtomicBoolean RUNNING = new AtomicBoolean(false);
 
     private static final long WINDOW_MS = 30L * 24 * 60 * 60 * 1000;
-    private static final int MAX_WINDOWS_PER_RUN = 24;
+    private static final int MAX_WINDOWS_PER_RUN = 120;
     private static final int BATCH_SIZE = 1000;
     private static final long HISTORY_START_MS = 1546300800000L; // 2019-01-01, before any supported device
 
@@ -89,6 +89,10 @@ public final class PostgresUploader {
         EXECUTOR.execute(() -> {
             try {
                 syncAll(device);
+            } catch (final Throwable t) {
+                // pgjdbc can throw JVM Errors on Android (e.g. NoClassDefFoundError
+                // for desktop-only APIs); never let the driver take the app down.
+                LOG.error("PostgreSQL sync crashed", t);
             } finally {
                 RUNNING.set(false);
             }
