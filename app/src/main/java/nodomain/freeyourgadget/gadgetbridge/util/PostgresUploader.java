@@ -381,6 +381,9 @@ public final class PostgresUploader {
         connection.commit();
     }
 
+    /** Huawei's sentinel for a field the watch did not measure. */
+    private static final int HUAWEI_NOT_REPORTED = -1;
+
     private static void addRow(final List<Row> rows, final GBDevice device, final String metric, final double value, final String unit, final long timestampSeconds) {
         if (Double.isNaN(value) || value <= 0 || value == ActivitySample.NOT_MEASURED || timestampSeconds <= 0) {
             return;
@@ -403,6 +406,19 @@ public final class PostgresUploader {
         rows.add(new Row(device.getAddress(), metric, value, unit, timestampMillis));
     }
 
+    /**
+     * For fields that are legitimately negative (altitude below sea level, sub-zero
+     * temperatures). The watch reports -1 for "not measured", so that exact value is
+     * dropped; anything below it is real data. A null column means the field was absent
+     * from the packet entirely.
+     */
+    private static void addRowSigned(final List<Row> rows, final GBDevice device, final String metric, final Integer value, final String unit, final long timestampSeconds) {
+        if (value == null || value == HUAWEI_NOT_REPORTED || timestampSeconds <= 0) {
+            return;
+        }
+        rows.add(new Row(device.getAddress(), metric, value, unit, timestampSeconds * 1000L));
+    }
+
     private static long toMillis(final long timestamp) {
         return timestamp > 10_000_000_000L ? timestamp : timestamp * 1000L;
     }
@@ -420,8 +436,8 @@ public final class PostgresUploader {
 
     private static void addWorkoutPointExtras(final List<Row> rows, final GBDevice device,
                                               final HuaweiWorkoutDataSample sample, final long ts) {
-        addRow(rows, device, "workout_altitude", sample.getAltitude(), "m", ts);
-        addRow(rows, device, "workout_temp", sample.getTemp(), "C", ts);
+        addRowSigned(rows, device, "workout_altitude", sample.getAltitude(), "m", ts);
+        addRowSigned(rows, device, "workout_temp", (int) sample.getTemp(), "C", ts);
         addRow(rows, device, "workout_spo2", sample.getSpo2(), "%", ts);
         addRow(rows, device, "workout_power", sample.getCyclingPower(), "W", ts);
         addRow(rows, device, "workout_step_length", sample.getStepLength(), "cm", ts);
