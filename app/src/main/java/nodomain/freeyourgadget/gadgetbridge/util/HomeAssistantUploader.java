@@ -142,6 +142,15 @@ public final class HomeAssistantUploader {
                 addDoubleMetric(metricSamples, config, device, "sleep_apnea_level", sample.getLevel(), null, normalizeTimestamp(sample.getTimestamp()));
             }
 
+            final nodomain.freeyourgadget.gadgetbridge.entities.Device dbDevice =
+                    nodomain.freeyourgadget.gadgetbridge.database.DBHelper.findDevice(device, session);
+            if (dbDevice != null) {
+                for (final nodomain.freeyourgadget.gadgetbridge.entities.BatteryLevel level :
+                        PostgresUploader.queryBattery(session, dbDevice, fromMs, toMs)) {
+                    addIntMetric(metricSamples, config, device, "battery", level.getLevel(), "%", normalizeTimestamp(level.getTimestamp()));
+                }
+            }
+
             uploadMetricSamples(config, device, metricSamples);
         } catch (final Exception e) {
             LOG.warn("Failed to backfill stored samples for Home Assistant", e);

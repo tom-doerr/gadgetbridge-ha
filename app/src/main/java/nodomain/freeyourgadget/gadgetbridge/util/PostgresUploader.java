@@ -36,6 +36,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
+import nodomain.freeyourgadget.gadgetbridge.database.DBHelper;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiHrvValueSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiSleepApneaSampleProvider;
@@ -43,7 +44,10 @@ import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiSleepStageSampl
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiSleepStatsSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiStressSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiTemperatureSampleProvider;
+import nodomain.freeyourgadget.gadgetbridge.entities.BatteryLevel;
+import nodomain.freeyourgadget.gadgetbridge.entities.BatteryLevelDao;
 import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
+import nodomain.freeyourgadget.gadgetbridge.entities.Device;
 import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiActivitySample;
 import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiHrvValueSample;
 import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiSleepApneaSample;
@@ -225,6 +229,16 @@ public final class PostgresUploader {
                     }
                 });
 
+                syncWindowedSource(connection, insert, device, "battery", (rows, fromMs, toMs) -> {
+                    final Device dbDevice = DBHelper.findDevice(device, session);
+                    if (dbDevice == null) {
+                        return;
+                    }
+                    for (final BatteryLevel level : queryBattery(session, dbDevice, fromMs, toMs)) {
+                        addRowAllowZero(rows, device, "battery", level.getLevel(), "%", level.getTimestamp());
+                    }
+                });
+
                 insert.close();
             }
         } catch (final Exception e) {
@@ -234,6 +248,18 @@ public final class PostgresUploader {
 
     private interface WindowCollector {
         void collect(List<Row> rows, long fromMs, long toMs) throws Exception;
+    }
+
+    static List<BatteryLevel> queryBattery(final DaoSession session, final Device dbDevice,
+                                           final long fromMs, final long toMs) {
+        return session.getBatteryLevelDao().queryBuilder()
+                .where(BatteryLevelDao.Properties.DeviceId.eq(dbDevice.getId()),
+                        BatteryLevelDao.Properties.BatteryIndex.eq(0),
+                        BatteryLevelDao.Properties.Level.between(0, 100),
+                        BatteryLevelDao.Properties.Timestamp.gt((int) (fromMs / 1000)),
+                        BatteryLevelDao.Properties.Timestamp.le((int) (toMs / 1000)))
+                .orderAsc(BatteryLevelDao.Properties.Timestamp)
+                .list();
     }
 
     /**
