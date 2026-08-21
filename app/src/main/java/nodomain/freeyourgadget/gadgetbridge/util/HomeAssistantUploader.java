@@ -142,6 +142,17 @@ public final class HomeAssistantUploader {
                 addDoubleMetric(metricSamples, config, device, "sleep_apnea_level", sample.getLevel(), null, normalizeTimestamp(sample.getTimestamp()));
             }
 
+            for (final nodomain.freeyourgadget.gadgetbridge.entities.HuaweiEmotionsSample sample :
+                    new nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiEmotionsSampleProvider(device, session).getAllSamples(fromMs, toMs)) {
+                final long ts = normalizeTimestamp(sample.getTimestamp());
+                if (sample.getValenceCharacter() != null) {
+                    addDoubleMetric(metricSamples, config, device, "emotion_valence", sample.getValenceCharacter(), null, ts);
+                }
+                if (sample.getArousalCharacter() != null) {
+                    addDoubleMetric(metricSamples, config, device, "emotion_arousal", sample.getArousalCharacter(), null, ts);
+                }
+            }
+
             final nodomain.freeyourgadget.gadgetbridge.entities.Device dbDevice =
                     nodomain.freeyourgadget.gadgetbridge.database.DBHelper.findDevice(device, session);
             if (dbDevice != null) {

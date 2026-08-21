@@ -37,6 +37,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHelper;
+import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiEmotionsSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiHrvValueSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiSleepApneaSampleProvider;
@@ -48,6 +49,11 @@ import nodomain.freeyourgadget.gadgetbridge.entities.BatteryLevel;
 import nodomain.freeyourgadget.gadgetbridge.entities.BatteryLevelDao;
 import nodomain.freeyourgadget.gadgetbridge.entities.DaoSession;
 import nodomain.freeyourgadget.gadgetbridge.entities.Device;
+import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiEcgDataSample;
+import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiEcgDataSampleDao;
+import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiEcgSummarySample;
+import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiEcgSummarySampleDao;
+import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiEmotionsSample;
 import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiActivitySample;
 import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiHrvValueSample;
 import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiSleepApneaSample;
@@ -212,6 +218,11 @@ public final class PostgresUploader {
                         addRow(rows, device, "workout_steps", sample.getStepCount(), "steps", ts);
                         addRow(rows, device, "workout_duration", sample.getDuration(), "s", ts);
                         addRowAllowZero(rows, device, "workout_type", sample.getType(), null, ts);
+                        addRow(rows, device, "workout_elevation_gain", sample.getElevationGain(), "m", ts);
+                        addRow(rows, device, "workout_elevation_loss", sample.getElevationLoss(), "m", ts);
+                        addRow(rows, device, "workout_max_altitude", sample.getMaxAltitude(), "m", ts);
+                        addRow(rows, device, "workout_load", sample.getWorkoutLoad(), null, ts);
+                        addSummaryEffectRows(rows, device, sample, ts);
                     }
                 });
 
@@ -226,6 +237,7 @@ public final class PostgresUploader {
                         addRow(rows, device, "workout_speed", sample.getSpeed(), "cm/s", ts);
                         addRow(rows, device, "workout_step_rate", sample.getStepRate() & 0xff, "spm", ts);
                         addRow(rows, device, "workout_cadence", sample.getCadence(), "rpm", ts);
+                        addWorkoutPointExtras(rows, device, sample, ts);
                     }
                 });
 
@@ -237,6 +249,17 @@ public final class PostgresUploader {
                     for (final BatteryLevel level : queryBattery(session, dbDevice, fromMs, toMs)) {
                         addRowAllowZero(rows, device, "battery", level.getLevel(), "%", level.getTimestamp());
                     }
+                });
+
+                syncWindowedSource(connection, insert, device, "emotions", (rows, fromMs, toMs) -> {
+                    for (final HuaweiEmotionsSample sample :
+                            new HuaweiEmotionsSampleProvider(device, session).getAllSamples(fromMs, toMs)) {
+                        addEmotionRows(rows, device, sample);
+                    }
+                });
+
+                syncWindowedSource(connection, insert, device, "ecg", (rows, fromMs, toMs) -> {
+                    syncEcg(session, rows, device, fromMs, toMs);
                 });
 
                 insert.close();
@@ -319,7 +342,7 @@ public final class PostgresUploader {
         for (final Row row : rows) {
             insert.setString(1, row.deviceAddress);
             insert.setString(2, row.metric);
-            insert.setTimestamp(3, new Timestamp(row.timestampSeconds * 1000L));
+            insert.setTimestamp(3, new Timestamp(row.timestampMillis));
             insert.setDouble(4, row.value);
             insert.setString(5, row.unit);
             insert.addBatch();
@@ -362,14 +385,88 @@ public final class PostgresUploader {
         if (Double.isNaN(value) || value <= 0 || value == ActivitySample.NOT_MEASURED || timestampSeconds <= 0) {
             return;
         }
-        rows.add(new Row(device.getAddress(), metric, value, unit, timestampSeconds));
+        rows.add(new Row(device.getAddress(), metric, value, unit, timestampSeconds * 1000L));
     }
 
     private static void addRowAllowZero(final List<Row> rows, final GBDevice device, final String metric, final double value, final String unit, final long timestampSeconds) {
         if (Double.isNaN(value) || value < 0 || timestampSeconds <= 0) {
             return;
         }
-        rows.add(new Row(device.getAddress(), metric, value, unit, timestampSeconds));
+        rows.add(new Row(device.getAddress(), metric, value, unit, timestampSeconds * 1000L));
+    }
+
+    /** Signed metrics (e.g. emotion valence) and sub-second timestamps. */
+    private static void addRowMillisSigned(final List<Row> rows, final GBDevice device, final String metric, final Double value, final String unit, final long timestampMillis) {
+        if (value == null || Double.isNaN(value) || timestampMillis <= 0) {
+            return;
+        }
+        rows.add(new Row(device.getAddress(), metric, value, unit, timestampMillis));
+    }
+
+    private static long toMillis(final long timestamp) {
+        return timestamp > 10_000_000_000L ? timestamp : timestamp * 1000L;
+    }
+
+    private static void addSummaryEffectRows(final List<Row> rows, final GBDevice device,
+                                             final HuaweiWorkoutSummarySample sample, final long ts) {
+        addRow(rows, device, "workout_aerobic_effect", sample.getWorkoutAerobicEffect(), null, ts);
+        addRow(rows, device, "workout_anaerobic_effect", sample.getWorkoutAnaerobicEffect(), null, ts);
+        addRow(rows, device, "workout_recovery_time", sample.getRecoveryTime(), "h", ts);
+        addRow(rows, device, "workout_max_met", sample.getMaxMET(), null, ts);
+        addRow(rows, device, "workout_training_points", sample.getTrainingPoints(), null, ts);
+        addRow(rows, device, "workout_max_hr_peak", sample.getMaxHeartRatePeak(), "bpm", ts);
+        addRow(rows, device, "workout_min_hr_peak", sample.getMinHeartRatePeak(), "bpm", ts);
+    }
+
+    private static void addWorkoutPointExtras(final List<Row> rows, final GBDevice device,
+                                              final HuaweiWorkoutDataSample sample, final long ts) {
+        addRow(rows, device, "workout_altitude", sample.getAltitude(), "m", ts);
+        addRow(rows, device, "workout_temp", sample.getTemp(), "C", ts);
+        addRow(rows, device, "workout_spo2", sample.getSpo(), "%", ts);
+        addRow(rows, device, "workout_power", sample.getCyclingPower(), "W", ts);
+        addRow(rows, device, "workout_step_length", sample.getStepLength(), "cm", ts);
+        addRow(rows, device, "workout_ground_contact", sample.getGroundContactTime(), "ms", ts);
+        addRow(rows, device, "workout_impact", sample.getImpact(), "g", ts);
+        addRow(rows, device, "workout_swolf", sample.getSwolf(), null, ts);
+        addRow(rows, device, "workout_stroke_rate", sample.getStrokeRate(), "spm", ts);
+    }
+
+    private static void addEmotionRows(final List<Row> rows, final GBDevice device,
+                                       final HuaweiEmotionsSample sample) {
+        final long tsMs = toMillis(sample.getTimestamp());
+        addRowMillisSigned(rows, device, "emotion_valence", sample.getValenceCharacter(), null, tsMs);
+        addRowMillisSigned(rows, device, "emotion_arousal", sample.getArousalCharacter(), null, tsMs);
+        addRowMillisSigned(rows, device, "emotion_status", (double) sample.getStatus(), null, tsMs);
+    }
+
+    /** ECG summaries as metrics, waveform points at millisecond offsets. */
+    private static void syncEcg(final DaoSession session, final List<Row> rows,
+                                final GBDevice device, final long fromMs, final long toMs) {
+        final List<HuaweiEcgSummarySample> summaries = session.getHuaweiEcgSummarySampleDao().queryBuilder()
+                .whereOr(HuaweiEcgSummarySampleDao.Properties.StartTimestamp.between(fromMs / 1000, toMs / 1000),
+                        HuaweiEcgSummarySampleDao.Properties.StartTimestamp.between(fromMs, toMs))
+                .list();
+        for (final HuaweiEcgSummarySample summary : summaries) {
+            final long startMs = toMillis(summary.getStartTimestamp());
+            addRowMillisSigned(rows, device, "ecg_avg_heart_rate",
+                    (double) summary.getAverageHeartRate(), "bpm", startMs);
+            addRowMillisSigned(rows, device, "ecg_arrhythmia_type",
+                    (double) summary.getArrhythmiaType(), null, startMs);
+            syncEcgWaveform(session, rows, device, summary, startMs);
+        }
+    }
+
+    private static void syncEcgWaveform(final DaoSession session, final List<Row> rows,
+                                        final GBDevice device,
+                                        final HuaweiEcgSummarySample summary, final long startMs) {
+        final List<HuaweiEcgDataSample> points = session.getHuaweiEcgDataSampleDao().queryBuilder()
+                .where(HuaweiEcgDataSampleDao.Properties.EcgId.eq(summary.getEcgId()))
+                .orderAsc(HuaweiEcgDataSampleDao.Properties.TimeDelta)
+                .list();
+        for (final HuaweiEcgDataSample point : points) {
+            addRowMillisSigned(rows, device, "ecg", (double) point.getValue(),
+                    "raw", startMs + point.getTimeDelta());
+        }
     }
 
     private static int unsigned(final int value) {
@@ -395,14 +492,14 @@ public final class PostgresUploader {
         final String metric;
         final double value;
         final String unit;
-        final long timestampSeconds;
+        final long timestampMillis;
 
-        private Row(final String deviceAddress, final String metric, final double value, final String unit, final long timestampSeconds) {
+        private Row(final String deviceAddress, final String metric, final double value, final String unit, final long timestampMillis) {
             this.deviceAddress = deviceAddress;
             this.metric = metric;
             this.value = value;
             this.unit = unit;
-            this.timestampSeconds = timestampSeconds;
+            this.timestampMillis = timestampMillis;
         }
     }
 
