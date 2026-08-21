@@ -422,7 +422,7 @@ public final class PostgresUploader {
                                               final HuaweiWorkoutDataSample sample, final long ts) {
         addRow(rows, device, "workout_altitude", sample.getAltitude(), "m", ts);
         addRow(rows, device, "workout_temp", sample.getTemp(), "C", ts);
-        addRow(rows, device, "workout_spo2", sample.getSpo(), "%", ts);
+        addRow(rows, device, "workout_spo2", sample.getSpo2(), "%", ts);
         addRow(rows, device, "workout_power", sample.getCyclingPower(), "W", ts);
         addRow(rows, device, "workout_step_length", sample.getStepLength(), "cm", ts);
         addRow(rows, device, "workout_ground_contact", sample.getGroundContactTime(), "ms", ts);
