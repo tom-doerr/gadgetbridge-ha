@@ -63,6 +63,16 @@ import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiStressSample;
 import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiTemperatureSample;
 import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiWorkoutDataSample;
 import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiWorkoutDataSampleDao;
+import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiWorkoutPaceSample;
+import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiWorkoutPaceSampleDao;
+import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiWorkoutSectionsSample;
+import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiWorkoutSectionsSampleDao;
+import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiWorkoutSpO2Sample;
+import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiWorkoutSpO2SampleDao;
+import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiWorkoutSummaryAdditionalValuesSample;
+import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiWorkoutSummaryAdditionalValuesSampleDao;
+import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiWorkoutSwimSegmentsSample;
+import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiWorkoutSwimSegmentsSampleDao;
 import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiWorkoutSummarySample;
 import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiWorkoutSummarySampleDao;
 import nodomain.freeyourgadget.gadgetbridge.impl.GBDevice;
@@ -223,6 +233,7 @@ public final class PostgresUploader {
                         addRow(rows, device, "workout_max_altitude", sample.getMaxAltitude(), "m", ts);
                         addRow(rows, device, "workout_load", sample.getWorkoutLoad(), null, ts);
                         addSummaryEffectRows(rows, device, sample, ts);
+                        addWorkoutChildRows(session, rows, device, sample.getWorkoutId(), ts);
                     }
                 });
 
@@ -398,6 +409,14 @@ public final class PostgresUploader {
         rows.add(new Row(device.getAddress(), metric, value, unit, timestampSeconds * 1000L));
     }
 
+    /** Positive-only metrics that already carry a millisecond timestamp. */
+    private static void addRowMillis(final List<Row> rows, final GBDevice device, final String metric, final double value, final String unit, final long timestampMillis) {
+        if (Double.isNaN(value) || value <= 0 || value == ActivitySample.NOT_MEASURED || timestampMillis <= 0) {
+            return;
+        }
+        rows.add(new Row(device.getAddress(), metric, value, unit, timestampMillis));
+    }
+
     /** Signed metrics (e.g. emotion valence) and sub-second timestamps. */
     private static void addRowMillisSigned(final List<Row> rows, final GBDevice device, final String metric, final Double value, final String unit, final long timestampMillis) {
         if (value == null || Double.isNaN(value) || timestampMillis <= 0) {
@@ -432,6 +451,94 @@ public final class PostgresUploader {
         addRow(rows, device, "workout_training_points", sample.getTrainingPoints(), null, ts);
         addRow(rows, device, "workout_max_hr_peak", sample.getMaxHeartRatePeak(), "bpm", ts);
         addRow(rows, device, "workout_min_hr_peak", sample.getMinHeartRatePeak(), "bpm", ts);
+    }
+
+    /**
+     * Per-workout child series (splits, sections, in-workout SpO2) carry an index
+     * rather than a clock time. They are stored at millisecond offsets from the
+     * workout start, the same convention the ECG waveform uses, which keeps every
+     * point on its own primary key and in the right order.
+     */
+    private static void addWorkoutChildRows(final DaoSession session, final List<Row> rows,
+                                            final GBDevice device, final Long workoutId,
+                                            final long startSeconds) {
+        if (workoutId == null || startSeconds <= 0) {
+            return;
+        }
+        final long startMs = startSeconds * 1000L;
+
+        for (final HuaweiWorkoutPaceSample pace : session.getHuaweiWorkoutPaceSampleDao().queryBuilder()
+                .where(HuaweiWorkoutPaceSampleDao.Properties.WorkoutId.eq(workoutId))
+                .orderAsc(HuaweiWorkoutPaceSampleDao.Properties.PaceIndex)
+                .list()) {
+            final long ts = startMs + pace.getPaceIndex();
+            addRowMillis(rows, device, "workout_pace", pace.getPace(), "s/km", ts);
+            addRowMillis(rows, device, "workout_pace_distance", pace.getDistance(), "km", ts);
+        }
+
+        for (final HuaweiWorkoutSpO2Sample spo2 : session.getHuaweiWorkoutSpO2SampleDao().queryBuilder()
+                .where(HuaweiWorkoutSpO2SampleDao.Properties.WorkoutId.eq(workoutId))
+                .orderAsc(HuaweiWorkoutSpO2SampleDao.Properties.Interval)
+                .list()) {
+            addRowMillis(rows, device, "workout_spo2_reading", spo2.getValue(), "%",
+                    startMs + spo2.getInterval() * 1000L);
+        }
+
+        for (final HuaweiWorkoutSectionsSample section : session.getHuaweiWorkoutSectionsSampleDao().queryBuilder()
+                .where(HuaweiWorkoutSectionsSampleDao.Properties.WorkoutId.eq(workoutId))
+                .orderAsc(HuaweiWorkoutSectionsSampleDao.Properties.RowIdx)
+                .list()) {
+            final long ts = startMs + section.getRowIdx();
+            addRowMillis(rows, device, "workout_section_time", section.getTime(), "s", ts);
+            addRowMillis(rows, device, "workout_section_distance", section.getDistance(), "m", ts);
+            addRowMillis(rows, device, "workout_section_pace", section.getPace(), "s/km", ts);
+            addRowMillis(rows, device, "workout_section_heart_rate", section.getHeartRate(), "bpm", ts);
+            addRowMillis(rows, device, "workout_section_cadence", section.getCadence(), "spm", ts);
+            addRowMillis(rows, device, "workout_section_step_length", section.getStepLength(), "cm", ts);
+            addRowMillis(rows, device, "workout_section_rise", section.getTotalRise(), "m", ts);
+            addRowMillis(rows, device, "workout_section_descend", section.getTotalDescend(), "m", ts);
+            addRowMillis(rows, device, "workout_section_max_depth", section.getDivingMaxDepth(), "m", ts);
+        }
+
+        for (final HuaweiWorkoutSwimSegmentsSample segment : session.getHuaweiWorkoutSwimSegmentsSampleDao().queryBuilder()
+                .where(HuaweiWorkoutSwimSegmentsSampleDao.Properties.WorkoutId.eq(workoutId))
+                .orderAsc(HuaweiWorkoutSwimSegmentsSampleDao.Properties.SegmentIndex)
+                .list()) {
+            final long ts = startMs + segment.getSegmentIndex();
+            addRowMillis(rows, device, "workout_swim_distance", segment.getDistance(), "m", ts);
+            addRowMillis(rows, device, "workout_swim_pace", segment.getPace(), "s/100m", ts);
+            addRowMillis(rows, device, "workout_swim_strokes", segment.getStrokes(), null, ts);
+            addRowMillis(rows, device, "workout_swim_avg_swolf", segment.getAvgSwolf(), null, ts);
+            addRowMillis(rows, device, "workout_swim_time", segment.getTime(), "s", ts);
+        }
+
+        // Vendor key/value extras (e.g. postureType). Only numeric ones fit the schema.
+        for (final HuaweiWorkoutSummaryAdditionalValuesSample extra :
+                session.getHuaweiWorkoutSummaryAdditionalValuesSampleDao().queryBuilder()
+                        .where(HuaweiWorkoutSummaryAdditionalValuesSampleDao.Properties.WorkoutId.eq(workoutId))
+                        .list()) {
+            final Double value = parseNumber(extra.getValue());
+            if (value == null || extra.getKey() == null) {
+                continue;
+            }
+            addRowMillisSigned(rows, device, "workout_" + snakeCase(extra.getKey()), value, null, startMs);
+        }
+    }
+
+    /** postureType -> posture_type, so vendor keys read like the other metric names. */
+    private static String snakeCase(final String key) {
+        return sanitize(key.replaceAll("([a-z0-9])([A-Z])", "$1_$2"));
+    }
+
+    private static Double parseNumber(final String value) {
+        if (value == null || value.isEmpty()) {
+            return null;
+        }
+        try {
+            return Double.parseDouble(value.trim());
+        } catch (final NumberFormatException ignored) {
+            return null;
+        }
     }
 
     private static void addWorkoutPointExtras(final List<Row> rows, final GBDevice device,
