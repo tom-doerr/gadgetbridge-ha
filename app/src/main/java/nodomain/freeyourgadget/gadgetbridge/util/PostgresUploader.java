@@ -586,9 +586,18 @@ public final class PostgresUploader {
                 .where(HuaweiEcgDataSampleDao.Properties.EcgId.eq(summary.getEcgId()))
                 .orderAsc(HuaweiEcgDataSampleDao.Properties.TimeDelta)
                 .list();
+        // TimeDelta units are undocumented; scale deltas onto the
+        // recording's real start..end span instead of guessing.
+        final long endMs = toMillis(summary.getEndTimestamp());
+        long maxDelta = 0;
+        for (final HuaweiEcgDataSample point : points) {
+            maxDelta = Math.max(maxDelta, point.getTimeDelta());
+        }
+        final double scale = (maxDelta > 0 && endMs > startMs)
+                ? (endMs - startMs) / (double) maxDelta : 1.0;
         for (final HuaweiEcgDataSample point : points) {
             addRowMillisSigned(rows, device, "ecg", (double) point.getValue(),
-                    "raw", startMs + point.getTimeDelta());
+                    "raw", startMs + Math.round(point.getTimeDelta() * scale));
         }
     }
 
