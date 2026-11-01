@@ -145,6 +145,7 @@ import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.p2p.HuaweiP2P
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.p2p.HuaweiP2PDirection;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.p2p.HuaweiP2PTrackService;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.p2p.HuaweiP2PDataDictionarySyncService;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.p2p.dictionarysync.HuaweiDictionarySyncArterialStiffness;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.p2p.dictionarysync.HuaweiDictionarySyncInterface;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.AcceptAgreementsRequest;
 import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.requests.GetAppInfoParams;
@@ -1631,6 +1632,10 @@ public class HuaweiSupportProvider {
         }
         syncState.setP2pSync(true);
         List<Integer> dictClasses = new ArrayList<>(sup.keySet());
+        // last: if the watch stays silent about this newly enabled class, the others are already done
+        if (dictClasses.remove(Integer.valueOf(HuaweiDictionarySyncArterialStiffness.ARTERIAL_STIFFNESS_CLASS))) {
+            dictClasses.add(HuaweiDictionarySyncArterialStiffness.ARTERIAL_STIFFNESS_CLASS);
+        }
         P2PSyncService.startSync(dictClasses, new HuaweiP2PDataDictionarySyncService.DictionarySyncCallback() {
             @Override
             public long onGetLastDataSyncTimestamp(int dictClass) {

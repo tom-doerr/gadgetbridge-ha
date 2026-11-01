@@ -39,6 +39,13 @@ import nodomain.freeyourgadget.gadgetbridge.database.DBHandler;
 import nodomain.freeyourgadget.gadgetbridge.database.DBHelper;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiEmotionsSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiHrvValueSampleProvider;
+import de.greenrobot.dao.query.QueryBuilder;
+import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiUtil;
+import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiDictData;
+import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiDictDataDao;
+import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiDictDataValues;
+import nodomain.freeyourgadget.gadgetbridge.entities.HuaweiDictDataValuesDao;
+import nodomain.freeyourgadget.gadgetbridge.service.devices.huawei.p2p.dictionarysync.HuaweiDictionarySyncArterialStiffness;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiSleepApneaSampleProvider;
 import nodomain.freeyourgadget.gadgetbridge.devices.huawei.HuaweiSleepStageSampleProvider;
@@ -273,6 +280,10 @@ public final class PostgresUploader {
                     syncEcg(session, rows, device, fromMs, toMs);
                 });
 
+                syncWindowedSource(connection, insert, device, "arterial_stiffness", (rows, fromMs, toMs) -> {
+                    syncArterialStiffness(session, rows, device, fromMs, toMs);
+                });
+
                 insert.close();
             }
         } catch (final Exception e) {
@@ -391,6 +402,9 @@ public final class PostgresUploader {
         }
         connection.commit();
     }
+
+    static final String PWV_PREFIX = "ecg_pwv_";
+    static final int MAX_RAW_BYTES = 256 * 1024;
 
     /** Huawei's sentinel for a field the watch did not measure. */
     private static final int HUAWEI_NOT_REPORTED = -1;
@@ -579,6 +593,55 @@ public final class PostgresUploader {
         }
     }
 
+    /**
+     * Arterial stiffness records. Their fields are not decoded yet, so each value goes up as it came: an 8-byte value
+     * also as the double the watch's other dictionary values are, and always its length and every byte (one row per
+     * byte, sample_ts = the record's start + the byte's index in ms), which lets the fields be named from the database
+     * alone. The metric prefix starts with "ecg" on purpose: the fine-tune's sidecar export takes any metric it does
+     * not exclude as a training target, and it excludes that prefix.
+     */
+    private static void syncArterialStiffness(final DaoSession session, final List<Row> rows,
+                                              final GBDevice device, final long fromMs, final long toMs) {
+        final Device dbDevice = DBHelper.findDevice(device, session);
+        if (dbDevice == null) {
+            return;
+        }
+        final QueryBuilder<HuaweiDictData> query = session.getHuaweiDictDataDao().queryBuilder();
+        query.where(HuaweiDictDataDao.Properties.DeviceId.eq(dbDevice.getId()),
+                HuaweiDictDataDao.Properties.DictClass.eq(HuaweiDictionarySyncArterialStiffness.ARTERIAL_STIFFNESS_CLASS));
+        query.whereOr(HuaweiDictDataDao.Properties.StartTimestamp.between(fromMs / 1000, toMs / 1000),
+                HuaweiDictDataDao.Properties.StartTimestamp.between(fromMs, toMs));
+        for (final HuaweiDictData record : query.list()) {
+            final long startMs = toMillis(record.getStartTimestamp());
+            final Long end = record.getEndTimestamp();
+            if (end != null && toMillis(end) > startMs) {
+                rows.add(new Row(device.getAddress(), PWV_PREFIX + "duration_s", (toMillis(end) - startMs) / 1000.0, "s", startMs));
+            }
+            for (final HuaweiDictDataValues value : session.getHuaweiDictDataValuesDao().queryBuilder()
+                    .where(HuaweiDictDataValuesDao.Properties.DictId.eq(record.getDictId())).list()) {
+                addDictValueRows(rows, device.getAddress(), PWV_PREFIX, value.getDictType(), value.getTag(), value.getValue(), startMs);
+            }
+        }
+    }
+
+    static void addDictValueRows(final List<Row> rows, final String address, final String prefix, final int dictType,
+                                 final byte tag, final byte[] value, final long startMs) {
+        if (value == null) {
+            return;
+        }
+        final String field = prefix + dictType + "_" + (tag & 0xff);
+        if (value.length == 8) {
+            final double decoded = HuaweiUtil.convBytes2Double(value);
+            if (!Double.isNaN(decoded) && !Double.isInfinite(decoded)) {
+                rows.add(new Row(address, field, decoded, null, startMs));
+            }
+        }
+        rows.add(new Row(address, field + "_length", value.length, "bytes", startMs));
+        for (int i = 0; i < Math.min(value.length, MAX_RAW_BYTES); i++) {
+            rows.add(new Row(address, field + "_raw", value[i] & 0xff, "byte", startMs + i));
+        }
+    }
+
     private static void syncEcgWaveform(final DaoSession session, final List<Row> rows,
                                         final GBDevice device,
                                         final HuaweiEcgSummarySample summary, final long startMs) {
@@ -619,14 +682,14 @@ public final class PostgresUploader {
         return input.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_]+", "_");
     }
 
-    private static final class Row {
+    static final class Row {
         final String deviceAddress;
         final String metric;
         final double value;
         final String unit;
         final long timestampMillis;
 
-        private Row(final String deviceAddress, final String metric, final double value, final String unit, final long timestampMillis) {
+        Row(final String deviceAddress, final String metric, final double value, final String unit, final long timestampMillis) {
             this.deviceAddress = deviceAddress;
             this.metric = metric;
             this.value = value;

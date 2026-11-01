@@ -54,6 +54,12 @@ Beyond the HA metrics above this also stores `raw_intensity`, the per-minute
 `sleep_stage` timeline, `sleep_deep_part`, and workout data (`workout_heart_rate`,
 `workout_speed`, `workout_step_rate`, `workout_cadence`, plus per-workout summaries).
 
+Arterial stiffness results (dictionary class 400017, watches with that capability) are not
+decoded yet, so they go up as received: `ecg_pwv_<type>_<tag>` (the double, for an 8-byte
+value), `..._length`, `..._raw` (one row per byte, `sample_ts` = the record's start + the
+byte's index in ms) and `ecg_pwv_duration_s`. The class syncs last, and a watch that does not
+answer it within 30 s is skipped, so it cannot hold up the other data.
+
 A persisted per-source cursor walks the history in 30-day windows, capped per run, so
 the first syncs backfill everything without blocking the phone and later syncs stay
 incremental. Inserts use `ON CONFLICT DO NOTHING`, so re-runs are idempotent.
